@@ -1,174 +1,299 @@
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/DashboardLayout";
 import { useAppStore } from "@/lib/store";
-import { cities } from "@/lib/data";
 import { RiskBadge } from "@/components/RiskBadge";
-import type { Shipment } from "@/lib/data";
+import { MapContainer, TileLayer, Marker, Polyline, Popup } from "react-leaflet";
+import L from "leaflet";
+import "leaflet/dist/leaflet.css";
+import { AlertTriangle, FastForward, Activity } from "lucide-react";
 
-// Simple SVG-based map of US with plotted shipments
-function MapView({ shipments }: { shipments: Shipment[] }) {
-  const [animProgress, setAnimProgress] = useState<Record<string, number>>({});
+// --- CUSTOM MAP ICONS ---
+const originIcon = L.divIcon({
+  className: "bg-transparent",
+  html: `<div class="flex items-center justify-center w-8 h-8 bg-slate-800 border-2 border-white rounded-full shadow-lg text-sm">🏭</div>`,
+  iconSize: [32, 32],
+  iconAnchor: [16, 16],
+});
 
-  useEffect(() => {
-    const initial: Record<string, number> = {};
-    shipments.forEach((s) => {
-      initial[s.id] = s.progress;
+const destIcon = L.divIcon({
+  className: "bg-transparent",
+  html: `<div class="flex items-center justify-center w-8 h-8 bg-emerald-600 border-2 border-white rounded-full shadow-lg text-sm">🏥</div>`,
+  iconSize: [32, 32],
+  iconAnchor: [16, 16],
+});
+
+const createTruckIcon = (isTraffic: boolean, label: string) => L.divIcon({
+  className: "bg-transparent",
+  html: `<div class="relative flex flex-col items-center">
+          <div class="bg-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow-md whitespace-nowrap mb-1 text-slate-800">
+            ${label}
+          </div>
+          <div class="flex items-center justify-center w-7 h-7 ${isTraffic ? 'bg-orange-500 animate-pulse' : 'bg-blue-600'} border-2 border-white rounded shadow-lg text-xs">🚚</div>
+         </div>`,
+  iconSize: [32, 48],
+  iconAnchor: [16, 24],
+});
+
+// --- PAN-INDIA DEMO ROUTES ---
+// We define 4 distinct physical routes to show a massive logistics network
+const ROUTES = [
+  {
+    originName: "Mumbai", destName: "Pune",
+    std: [[19.076, 72.877], [18.75, 73.40], [18.520, 73.856]] as [number, number][],
+    fast: [[19.076, 72.877], [18.90, 73.20], [18.65, 73.65], [18.520, 73.856]] as [number, number][],
+  },
+  {
+    originName: "Delhi", destName: "Agra",
+    std: [[28.613, 77.209], [27.80, 77.60], [27.176, 78.008]] as [number, number][],
+    fast: [[28.613, 77.209], [28.10, 77.80], [27.50, 77.90], [27.176, 78.008]] as [number, number][],
+  },
+  {
+    originName: "Bangalore", destName: "Mysore",
+    std: [[12.971, 77.594], [12.50, 77.00], [12.295, 76.639]] as [number, number][],
+    fast: [[12.971, 77.594], [12.70, 77.30], [12.40, 76.80], [12.295, 76.639]] as [number, number][],
+  },
+  {
+    originName: "Chennai", destName: "Vellore",
+    std: [[13.082, 80.270], [12.90, 79.80], [12.916, 79.132]] as [number, number][],
+    fast: [[13.082, 80.270], [13.20, 79.80], [13.10, 79.40], [12.916, 79.132]] as [number, number][],
+  }
+];
+
+// --- HELPER FUNCTION ---
+const interpolatePosition = (points: [number, number][], progressPercent: number): [number, number] => {
+  const totalSegments = points.length - 1;
+  const scaledProgress = (progressPercent / 100) * totalSegments;
+  
+  let currentSegment = Math.floor(scaledProgress);
+  if (currentSegment >= totalSegments) currentSegment = totalSegments - 1; 
+  
+  const segmentProgress = scaledProgress - currentSegment;
+  const start = points[currentSegment];
+  const end = points[currentSegment + 1];
+
+  return [
+    start[0] + (end[0] - start[0]) * segmentProgress,
+    start[1] + (end[1] - start[1]) * segmentProgress,
+  ];
+};
+
+// --- THE INTERACTIVE MAP COMPONENT ---
+function MultiTrackerMap({ shipments }: { shipments: any[] }) {
+  // Setup 4 independent tracking states
+  const [trucks, setTrucks] = useState(() => {
+    return ROUTES.map((route, index) => {
+      // Use real shipment data if available, otherwise fallback to demo data
+      const shipment = shipments[index] || { medicine: `Medical Supply ${index + 1}` };
+      return {
+        id: `truck-${index}`,
+        medicine: shipment.medicine,
+        progress: Math.random() * 15, // Start them at slightly different positions
+        hasTraffic: false,
+        routePath: 'standard' as 'standard' | 'fast',
+        routeData: route,
+        speedConfig: 0.2 + (Math.random() * 0.3), // Different speeds for realism
+        trafficTrigger: 25 + (Math.random() * 20), // Traffic hits at different points
+      };
     });
-    setAnimProgress(initial);
+  });
 
+  // Auto-Loop Animation for all 4 trucks
+  useEffect(() => {
     const interval = setInterval(() => {
-      setAnimProgress((prev) => {
-        const next = { ...prev };
-        shipments.forEach((s) => {
-          if (s.status === "In Transit" && (next[s.id] ?? 0) < 100) {
-            next[s.id] = Math.min((next[s.id] ?? s.progress) + 0.3, 100);
-          }
-        });
-        return next;
-      });
+      setTrucks((prevTrucks) => prevTrucks.map(truck => {
+        const speed = truck.hasTraffic ? 0.05 : truck.speedConfig;
+        let newProgress = truck.progress + speed;
+        let newTraffic = truck.hasTraffic;
+        let newRoutePath = truck.routePath;
+
+        // Auto-Trigger Traffic
+        if (newProgress > truck.trafficTrigger && newProgress < truck.trafficTrigger + 5 && truck.routePath === 'standard' && !truck.hasTraffic) {
+          newTraffic = true;
+        }
+
+        // Endless loop: Reset to start when it reaches the destination
+        if (newProgress >= 100) {
+          newProgress = 0;
+          newTraffic = false;
+          newRoutePath = 'standard';
+        }
+
+        return { ...truck, progress: newProgress, hasTraffic: newTraffic, routePath: newRoutePath };
+      }));
     }, 100);
-
     return () => clearInterval(interval);
-  }, [shipments]);
+  }, []);
 
-  // Map city coords to SVG space (simple projection)
-  const toSvg = (lat: number, lng: number) => {
-    const x = ((lng + 125) / 65) * 800;
-    const y = ((50 - lat) / 28) * 500;
-    return { x, y };
+  // AI Reroute Action for a specific truck
+  const handleReroute = (truckId: string) => {
+    setTrucks(prev => prev.map(t => 
+      t.id === truckId ? { ...t, routePath: 'fast', hasTraffic: false } : t
+    ));
   };
 
-  const inTransit = shipments.filter((s) => s.status === "In Transit");
+  if (typeof window === "undefined") return null;
+
+  const trucksInTraffic = trucks.filter(t => t.hasTraffic && t.routePath === 'standard');
 
   return (
-    <div className="relative bg-card rounded-lg border border-border overflow-hidden">
-      <svg viewBox="0 0 800 500" className="w-full h-auto" style={{ minHeight: 400 }}>
-        {/* Background */}
-        <rect width="800" height="500" fill="hsl(210 20% 96%)" />
+    <div className="flex flex-col gap-4 mb-8">
+      {/* ALERTS & TELEMETRY */}
+      <div className="bg-card border rounded-xl p-4 shadow-sm space-y-4">
         
-        {/* Grid lines */}
-        {Array.from({ length: 8 }).map((_, i) => (
-          <line key={`h${i}`} x1="0" y1={i * 62.5} x2="800" y2={i * 62.5} stroke="hsl(210 20% 90%)" strokeWidth="0.5" />
-        ))}
-        {Array.from({ length: 13 }).map((_, i) => (
-          <line key={`v${i}`} x1={i * 61.5} y1="0" x2={i * 61.5} y2="500" stroke="hsl(210 20% 90%)" strokeWidth="0.5" />
-        ))}
+        {/* Dynamic AI Alert Banners (Stacks if multiple trucks hit traffic) */}
+        {trucksInTraffic.length > 0 ? (
+          <div className="space-y-2">
+            {trucksInTraffic.map(truck => (
+              <div key={`alert-${truck.id}`} className="flex flex-col md:flex-row items-center justify-between bg-orange-500/10 border border-orange-500/50 p-3 rounded-lg gap-3 animate-fade-in-up">
+                <div className="flex items-center gap-2 text-orange-600 dark:text-orange-400 font-bold">
+                  <AlertTriangle className="w-5 h-5 animate-pulse" />
+                  <span>Traffic Delay: {truck.medicine} ({truck.routeData.originName} → {truck.routeData.destName})</span>
+                </div>
+                <button 
+                  onClick={() => handleReroute(truck.id)}
+                  className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-md font-medium animate-pulse transition-colors w-full md:w-auto justify-center shadow-md"
+                >
+                  <FastForward className="w-4 h-4" />
+                  AI Reroute
+                </button>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 font-medium p-3 bg-emerald-500/10 border border-emerald-500/50 rounded-lg">
+            <Activity className="w-5 h-5" />
+            <span>Pan-India System Online: Monitoring 4 Active Shipments</span>
+          </div>
+        )}
 
-        {/* US outline approximation */}
-        <path
-          d="M 80,120 Q 120,80 200,90 Q 300,70 400,85 Q 500,75 600,90 Q 680,100 720,130 Q 740,180 730,240 Q 720,300 680,340 Q 620,380 560,390 Q 480,400 400,380 Q 320,370 260,350 Q 200,340 150,300 Q 100,260 80,200 Z"
-          fill="hsl(210 30% 92%)"
-          stroke="hsl(210 20% 80%)"
-          strokeWidth="1.5"
-        />
+        {/* 4-Grid Telemetry Panel */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-2">
+          {trucks.map(truck => (
+            <div key={`telemetry-${truck.id}`} className="p-3 border rounded-lg bg-background">
+              <p className="font-bold text-foreground text-sm truncate">{truck.medicine}</p>
+              <p className="text-xs text-muted-foreground mb-2">{truck.routeData.originName} → {truck.routeData.destName}</p>
+              
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-xs uppercase font-semibold text-muted-foreground">Status</span>
+                <span className={`text-xs font-bold ${truck.hasTraffic ? 'text-orange-500' : 'text-blue-500'}`}>
+                  {truck.hasTraffic ? "Delayed" : "On Time"}
+                </span>
+              </div>
+              
+              <div className="flex justify-between items-center">
+                <span className="text-xs uppercase font-semibold text-muted-foreground">Route</span>
+                <span className={`text-xs font-bold ${truck.routePath === 'fast' ? 'text-emerald-500' : 'text-foreground'}`}>
+                  {truck.routePath === 'fast' ? "AI Bypass" : "Highway"}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
 
-        {/* Shipment routes */}
-        {inTransit.map((s) => {
-          const o = cities[s.origin];
-          const d = cities[s.destination];
-          if (!o || !d) return null;
-          const start = toSvg(o.lat, o.lng);
-          const end = toSvg(d.lat, d.lng);
-          const progress = (animProgress[s.id] ?? s.progress) / 100;
-          const currentX = start.x + (end.x - start.x) * progress;
-          const currentY = start.y + (end.y - start.y) * progress;
-          const isEmergency = s.priority === "Emergency";
+      {/* THE LEAFLET MAP */}
+      <div className="relative border-2 border-border rounded-xl shadow-md overflow-hidden z-0" style={{ height: "550px" }}>
+        {/* Zoom level 5 and center [21.0, 78.0] perfectly frames India */}
+        <MapContainer center={[21.0, 78.0]} zoom={5} style={{ height: "100%", width: "100%" }}>
+          <TileLayer
+            attribution='&copy; OpenStreetMap'
+            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          />
 
-          return (
-            <g key={s.id}>
-              {/* Route line */}
-              <line
-                x1={start.x} y1={start.y} x2={end.x} y2={end.y}
-                stroke={isEmergency ? "hsl(0 75% 55%)" : "hsl(210 90% 45%)"}
-                strokeWidth={isEmergency ? 2.5 : 1.5}
-                strokeDasharray={isEmergency ? "none" : "6 3"}
-                opacity={0.6}
-              />
-              {/* Traveled portion */}
-              <line
-                x1={start.x} y1={start.y} x2={currentX} y2={currentY}
-                stroke={isEmergency ? "hsl(0 75% 55%)" : "hsl(210 90% 45%)"}
-                strokeWidth={isEmergency ? 3 : 2}
-              />
-              {/* Vehicle marker */}
-              <g>
-                {isEmergency && (
-                  <circle cx={currentX} cy={currentY} r="12" fill="hsl(0 75% 55%)" opacity="0.2">
-                    <animate attributeName="r" values="12;20;12" dur="1.5s" repeatCount="indefinite" />
-                    <animate attributeName="opacity" values="0.3;0;0.3" dur="1.5s" repeatCount="indefinite" />
-                  </circle>
+          {trucks.map(truck => {
+            const currentRoute = truck.routePath === 'standard' ? truck.routeData.std : truck.routeData.fast;
+            const currentPos = interpolatePosition(currentRoute, truck.progress);
+
+            return (
+              <div key={`map-elements-${truck.id}`}>
+                {/* Standard Route Line */}
+                {truck.routePath === 'standard' && (
+                  <>
+                    <Polyline positions={[truck.routeData.std[0], truck.routeData.std[1]]} pathOptions={{ color: "#3b82f6", weight: 3, opacity: 0.6 }} />
+                    <Polyline 
+                      positions={[truck.routeData.std[1], truck.routeData.std[2]]} 
+                      pathOptions={{ 
+                        color: truck.hasTraffic ? "#f97316" : "#3b82f6", 
+                        weight: truck.hasTraffic ? 5 : 3, 
+                        dashArray: truck.hasTraffic ? "8, 8" : "none",
+                        opacity: 0.8
+                      }} 
+                    />
+                  </>
                 )}
-                <circle cx={currentX} cy={currentY} r="6" fill={isEmergency ? "hsl(0 75% 55%)" : "hsl(210 90% 45%)"} stroke="white" strokeWidth="2" />
-                <text x={currentX} y={currentY - 12} textAnchor="middle" fontSize="8" fill="hsl(215 25% 15%)" fontWeight="600">
-                  {s.medicine.split(" ")[0]}
-                </text>
-              </g>
-              {/* Origin marker */}
-              <circle cx={start.x} cy={start.y} r="4" fill="hsl(145 65% 42%)" stroke="white" strokeWidth="1.5" />
-              {/* Destination marker */}
-              <rect x={end.x - 4} y={end.y - 4} width="8" height="8" rx="2" fill="hsl(210 90% 45%)" stroke="white" strokeWidth="1.5" />
-            </g>
-          );
-        })}
 
-        {/* City labels */}
-        {Object.entries(cities).map(([name, coords]) => {
-          const pos = toSvg(coords.lat, coords.lng);
-          return (
-            <text key={name} x={pos.x} y={pos.y + 16} textAnchor="middle" fontSize="7" fill="hsl(215 15% 50%)" fontWeight="500">
-              {name}
-            </text>
-          );
-        })}
-      </svg>
+                {/* Fast Route Line */}
+                {truck.routePath === 'fast' && (
+                  <Polyline positions={truck.routeData.fast} pathOptions={{ color: "#10b981", weight: 4, opacity: 0.8 }} />
+                )}
 
-      {/* Legend */}
-      <div className="absolute bottom-4 left-4 bg-card/90 backdrop-blur-sm border border-border rounded-lg p-3 text-xs space-y-1">
-        <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-risk-high" />Emergency</div>
-        <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-primary" />Normal/High</div>
-        <div className="flex items-center gap-2"><span className="w-3 h-3 rounded-full bg-success" />Origin</div>
-        <div className="flex items-center gap-2"><span className="w-2.5 h-2.5 rounded-sm bg-primary" />Destination</div>
+                {/* Origin Marker */}
+                <Marker position={truck.routeData.std[0]} icon={originIcon}>
+                  <Popup><strong>{truck.routeData.originName} Facility</strong></Popup>
+                </Marker>
+
+                {/* Destination Marker */}
+                <Marker position={truck.routeData.std[truck.routeData.std.length - 1]} icon={destIcon}>
+                  <Popup><strong>{truck.routeData.destName} Hospital</strong></Popup>
+                </Marker>
+
+                {/* The Moving Truck */}
+                <Marker position={currentPos} icon={createTruckIcon(truck.hasTraffic, truck.medicine.split(" ")[0])} zIndexOffset={1000}>
+                  <Popup>
+                    <strong>{truck.medicine}</strong><br/>
+                    Progress: {Math.round(truck.progress)}%
+                  </Popup>
+                </Marker>
+              </div>
+            );
+          })}
+        </MapContainer>
       </div>
     </div>
   );
 }
 
+// --- MAIN PAGE COMPONENT ---
 export default function LiveMap() {
-  const shipments = useAppStore((s) => s.shipments);
+  const shipments = useAppStore((s) => s.shipments) || [];
   const inTransit = shipments.filter((s) => s.status === "In Transit");
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
         <div>
-          <h2 className="text-2xl font-bold text-foreground">Live Map Tracking</h2>
-          <p className="text-muted-foreground text-sm mt-1">{inTransit.length} shipments in transit</p>
+          <h2 className="text-2xl font-bold text-foreground">Live Command Center</h2>
+          <p className="text-muted-foreground text-sm mt-1">Monitoring active Pan-India deliveries</p>
         </div>
 
-        <MapView shipments={shipments} />
+        {/* The 4-Truck Interactive Map */}
+        <MultiTrackerMap shipments={inTransit} />
 
-        {/* Shipment cards below map */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {inTransit.map((s) => (
-            <div
-              key={s.id}
-              className={`bg-card rounded-lg border p-4 shadow-card ${
-                s.priority === "Emergency" ? "border-emergency animate-pulse-glow" : "border-border"
-              }`}
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-semibold text-foreground text-sm">{s.medicine}</span>
-                <RiskBadge level={s.riskLevel} />
-              </div>
-              <p className="text-xs text-muted-foreground">{s.origin} → {s.destination}</p>
-              <div className="flex items-center justify-between mt-3">
-                <span className="text-xs text-muted-foreground">ETA: <strong className="text-foreground">{s.eta}</strong></span>
-                <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
-                  <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${s.progress}%` }} />
+        {/* Database Shipment Cards */}
+        <div>
+          <h3 className="text-lg font-bold text-foreground mb-4">All Tracking Shipments</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {inTransit.map((s) => (
+              <div
+                key={s.id}
+                className={`bg-card rounded-lg border p-4 shadow-card ${
+                  s.priority === "Emergency" ? "border-emergency animate-pulse-glow" : "border-border"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-foreground text-sm">{s.medicine}</span>
+                  <RiskBadge level={s.riskLevel} />
+                </div>
+                <p className="text-xs text-muted-foreground">{s.origin} → {s.destination}</p>
+                <div className="flex items-center justify-between mt-3">
+                  <span className="text-xs text-muted-foreground">ETA: <strong className="text-foreground">{s.eta}</strong></span>
+                  <div className="w-20 h-1.5 bg-muted rounded-full overflow-hidden">
+                    <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${s.progress}%` }} />
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       </div>
     </DashboardLayout>
