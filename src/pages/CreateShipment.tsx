@@ -784,7 +784,7 @@ export default function CreateShipment() {
             {activeTab === "suppliers" && (
               <div className="space-y-3">
                 <p className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
-    
+                  Agent 4 — Score: 40% On-time + 30% Price + 30% Quality + experience + coverage
                   {result.cold_chain_warning ? " — cold-chain penalty applied" : ""}
                 </p>
                 {result.supplier_rankings.map(sup => (
