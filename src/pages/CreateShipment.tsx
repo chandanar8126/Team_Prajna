@@ -7,6 +7,7 @@ import type { Priority, Shipment, Alert } from "@/lib/data";
 import { Package, Clock, Route, ShieldAlert, CheckCircle } from "lucide-react";
 
 export default function CreateShipment() {
+  
   const { addShipment, addAlert } = useAppStore();
   const [form, setForm] = useState({
     medicine: "",
@@ -18,48 +19,93 @@ export default function CreateShipment() {
   });
   const [result, setResult] = useState<Shipment | null>(null);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const supplier = suppliers.find((s) => s.id === form.supplierId);
-    if (!supplier || !form.origin || !form.destination) return;
+   const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
 
-    const etaHours = calculateETA(form.origin, form.destination, form.priority);
-    const riskLevel = detectRisk(form.priority, form.origin, form.destination);
-    const recommendedRoute = getRecommendedRoute(form.origin, form.destination, form.priority);
-    const id = `SHP${String(Date.now()).slice(-6)}`;
+  const supplier = suppliers.find((s) => s.id === form.supplierId);
+  if (!supplier || !form.origin || !form.destination) return;
 
-    const shipment: Shipment = {
-      id,
-      medicine: form.medicine,
+  const etaRes = await fetch("http://127.0.0.1:5000/eta", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    origin: form.origin,
+    destination: form.destination,
+    priority: form.priority
+  })
+});
+
+const etaData = await etaRes.json();
+const etaHours = etaData.eta;
+
+  // 🔥 CALL BACKEND
+  const response = await fetch("http://127.0.0.1:5000/predict", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      priority: form.priority,
       weight: Number(form.weight),
       origin: form.origin,
-      destination: form.destination,
-      priority: form.priority,
-      supplierId: supplier.id,
-      supplierName: supplier.name,
-      eta: `${etaHours}h`,
-      etaHours,
-      riskLevel,
-      recommendedRoute,
-      status: "In Transit",
-      createdAt: new Date().toISOString(),
-      progress: 0,
-    };
+      destination: form.destination
+    })
+  });
 
-    addShipment(shipment);
-    setResult(shipment);
+  const data = await response.json();
+  const riskLevel = data.prediction;
 
-    if (form.priority === "Emergency") {
-      addAlert({
-        id: `a-${Date.now()}`,
-        shipmentId: id,
-        message: `🚨 Emergency shipment: ${form.medicine} – Critical delivery required`,
-        type: "emergency",
-        timestamp: new Date().toISOString(),
-        read: false,
-      });
-    }
+  const routeRes = await fetch("http://127.0.0.1:5000/route", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    origin: form.origin,
+    destination: form.destination,
+    priority: form.priority
+  })
+});
+
+const routeData = await routeRes.json();
+const recommendedRoute = routeData.route;
+
+  const id = `SHP${String(Date.now()).slice(-6)}`;
+
+  const shipment: Shipment = {
+    id,
+    medicine: form.medicine,
+    weight: Number(form.weight),
+    origin: form.origin,
+    destination: form.destination,
+    priority: form.priority,
+    supplierId: supplier.id,
+    supplierName: supplier.name,
+    eta: `${etaHours}h`,
+    etaHours,
+    riskLevel,
+    recommendedRoute,
+    status: "In Transit",
+    createdAt: new Date().toISOString(),
+    progress: 0,
   };
+
+  addShipment(shipment);
+  setResult(shipment);
+
+  if (form.priority === "Emergency") {
+    addAlert({
+      id: `a-${Date.now()}`,
+      shipmentId: id,
+      message: `🚨 Emergency shipment: ${form.medicine} – Critical delivery required`,
+      type: "emergency",
+      timestamp: new Date().toISOString(),
+      read: false,
+    });
+  }
+};
 
   return (
     <DashboardLayout>
@@ -77,7 +123,7 @@ export default function CreateShipment() {
                 required value={form.medicine}
                 onChange={(e) => setForm({ ...form, medicine: e.target.value })}
                 className="w-full px-4 py-2.5 rounded-lg border border-input bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                placeholder="e.g. Amoxicillin 500mg"
+                placeholder="e.g. Adrenaline Injection (Emergency)"
               />
             </div>
             <div>
