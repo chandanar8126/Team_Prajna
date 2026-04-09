@@ -43,6 +43,7 @@ export default function HospitalOrders() {
       hospitalName: "My Hospital",
       priority,
       destination,
+      origin: destination,
       status: "Pending",
       assignedFactoryId: null,
       assignedFactoryName: null,

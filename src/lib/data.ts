@@ -51,6 +51,7 @@ export interface HospitalOrder {
   quantity: number;
   hospitalName: string;
   priority: Priority;
+  origin: string;
   destination: string;
   status: OrderStatus;
   assignedFactoryId: string | null;

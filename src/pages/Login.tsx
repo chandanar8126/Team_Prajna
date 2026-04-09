@@ -26,8 +26,8 @@ export default function Login() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-3xl gradient-primary mb-4 shadow-glow">
             <HeartPulse className="w-8 h-8 text-primary-foreground" />
           </div>
-          <h1 className="text-3xl font-bold text-foreground">MediFlow AI</h1>
-          <p className="text-muted-foreground mt-1">AI-Powered Medical Supply Chain Intelligence</p>
+          <h1 className="text-3xl font-bold text-foreground">LogiFlow AI</h1>
+          <p className="text-muted-foreground mt-1">LogiFlow AI is a B2B AI-powered logistics optimization platform</p>
         </div>
 
         <form onSubmit={handleLogin} className="glass-card rounded-[32px] p-8 shadow-elevated space-y-6">
