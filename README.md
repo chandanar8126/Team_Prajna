@@ -1,3 +1,1 @@
-# Welcome to your Lovable project
-
-TODO: Document your project here
+Logi AI  :An ai based logistic and supply chain optimization
