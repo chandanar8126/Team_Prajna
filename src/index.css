@@ -68,17 +68,9 @@
   * {
     @apply border-border;
   }
-  html {
-    min-height: 100%;
-  }
   body {
     @apply bg-background text-foreground font-sans antialiased;
-    min-height: 100vh;
     font-family: 'Inter', system-ui, sans-serif;
-    background-image:
-      radial-gradient(circle at top left, rgba(56,189,248,0.18), transparent 30%),
-      radial-gradient(circle at bottom right, rgba(16,185,129,0.12), transparent 24%);
-    background-attachment: fixed;
   }
 }
 
@@ -103,16 +95,6 @@
   }
   .shadow-glow {
     box-shadow: var(--shadow-glow);
-  }
-  .glass-card {
-    background-color: rgba(255, 255, 255, 0.78);
-    backdrop-filter: blur(18px);
-    border: 1px solid rgba(255, 255, 255, 0.55);
-  }
-  .glass-panel {
-    background-color: rgba(243, 244, 246, 0.75);
-    backdrop-filter: blur(14px);
-    border: 1px solid rgba(226, 232, 240, 0.65);
   }
 }
 

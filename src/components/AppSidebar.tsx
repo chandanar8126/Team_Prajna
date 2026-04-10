@@ -39,7 +39,7 @@ export function AppSidebar() {
             {user?.role === "factory" ? <Factory className="w-6 h-6" /> : <Building2 className="w-6 h-6" />}
           </div>
           <div>
-            <h1 className="text-lg font-semibold text-sidebar-primary-foreground">MediFlow AI</h1>
+            <h1 className="text-lg font-semibold text-sidebar-primary-foreground">LogiFlow AI</h1>
             <p className="text-xs text-sidebar-foreground/60 capitalize">{user?.role} Portal</p>
           </div>
         </div>
